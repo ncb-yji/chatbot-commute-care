@@ -1,32 +1,24 @@
-# Multi-stage build를 위한 Node.js 이미지
-FROM node:18-alpine as build
+# Python 3.11 이미지 사용
+FROM python:3.11-slim
 
 # 작업 디렉토리 설정
 WORKDIR /app
 
-# package.json과 package-lock.json 복사
-COPY package*.json ./
+# 시스템 패키지 업데이트 및 필요한 패키지 설치
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
-# 의존성 설치
-RUN npm install
+# requirements.txt 복사 및 의존성 설치
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 소스 코드 복사
+# 애플리케이션 코드 복사
 COPY . .
 
-# React 앱 빌드
-RUN npm run build
+# 포트 8000 노출
+EXPOSE 8000
 
-# 프로덕션용 Nginx 이미지
-FROM nginx:alpine
-
-# 빌드된 파일을 Nginx로 복사 (경로 수정)
-COPY --from=build /app/build /usr/share/nginx/html
-
-# Nginx 설정 파일 복사
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# 포트 80 노출
-EXPOSE 80
-
-# Nginx 실행
-CMD ["nginx", "-g", "daemon off;"]
+# 애플리케이션 실행 명령
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
