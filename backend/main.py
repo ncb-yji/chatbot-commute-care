@@ -4,6 +4,11 @@ from pydantic import BaseModel
 import logging
 from typing import Optional, Dict, Any
 import os
+import time
+from dotenv import load_dotenv
+
+# .env 파일 로드 (backend 폴더 내의 .env 파일)
+load_dotenv()
 
 from config import Config
 from services.subway_service import SubwayService
@@ -23,7 +28,7 @@ app = FastAPI(
 # CORS 미들웨어 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=Config.CORS_ORIGINS,
+    allow_origins=["*"],  # 로컬 개발을 위해 모든 origin 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,6 +41,7 @@ openai_service = OpenAIService()
 # 요청/응답 모델 정의
 class ChatRequest(BaseModel):
     message: str
+    user_id: Optional[str] = "anonymous"  # user_id 필드 추가
     performance_mode: Optional[str] = "original"
 
 class ChatResponse(BaseModel):
@@ -72,30 +78,44 @@ async def chat(request: ChatRequest):
     사용자의 메시지를 받아서 지하철 실시간 정보를 조회하고
     자연어로 응답을 생성합니다.
     """
+    start_time = time.time()
+    
     try:
-        logger.info(f"챗봇 요청 수신: {request.message}")
+        logger.info(f"📥 챗봇 요청 수신: {request.message}")
         
-        # 1. 사용자 메시지에서 역 이름 파싱
+        # 1. 사용자 메시지에서 역 이름 파싱 (단일 역만 처리)
+        parsing_start = time.time()
         parsed_data = openai_service.parse_station_query(request.message)
-        stations = parsed_data.get("stations", [])
+        parsing_time = time.time() - parsing_start
+        logger.info(f"⚡ 파싱 완료: {parsing_time:.3f}초")
         
-        # 2. 지하철 실시간 정보 조회
+        stations = parsed_data.get("stations", [])
+        target_lines = parsed_data.get("lines", [])
+        
+        # 2. 지하철 실시간 정보 조회 (단일 역만 지원)
         subway_data = {"arrivals": []}
+        api_time = 0
         
         if stations:
-            # 첫 번째 역의 정보를 조회
+            # 단일 역의 정보를 조회 (경량화)
             station_name = stations[0]
-            subway_data = subway_service.get_realtime_arrival(station_name)
-            logger.info(f"지하철 정보 조회 완료: {station_name}")
+            api_start = time.time()
+            subway_data = subway_service.get_realtime_arrival(station_name, target_lines)
+            api_time = time.time() - api_start
+            logger.info(f"🚇 지하철 API 조회 완료: {station_name} ({api_time:.3f}초)")
         
         # 3. OpenAI 서비스를 통한 응답 생성
+        response_start = time.time()
         response_text = openai_service.generate_response(
             request.message, 
             subway_data, 
             parsed_data
         )
+        response_time = time.time() - response_start
         
-        logger.info(f"응답 생성 완료: {len(response_text)}자")
+        total_time = time.time() - start_time
+        logger.info(f"🤖 응답 생성 완료: {len(response_text)}자 ({response_time:.3f}초)")
+        logger.info(f"📊 총 처리 시간: {total_time:.3f}초 [파싱: {parsing_time:.3f}s, API: {api_time:.3f}s, 응답생성: {response_time:.3f}s]")
         
         return ChatResponse(
             response=response_text,
@@ -118,7 +138,7 @@ async def get_station_info(station_name: str):
     try:
         logger.info(f"역 정보 조회: {station_name}")
         
-        subway_data = subway_service.get_realtime_arrival(station_name)
+        subway_data = subway_service.get_realtime_arrival(station_name, None)
         
         if subway_data["status"] == "error":
             raise HTTPException(

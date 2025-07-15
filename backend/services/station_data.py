@@ -1,7 +1,7 @@
 """
 지하철 역 정보 데이터 관리
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import json
 import logging
 
@@ -714,10 +714,7 @@ class StationData:
         # 로깅 설정
         self.logger = logging.getLogger(__name__)
         
-        # 기존 STATN_ID 정보
-        self.station_info = {
-            # ... existing code ...
-        }
+        # 경량화: 불필요한 station_info 제거됨
         
         # 🚀 성능 최적화: 역 이름 → ID 매핑 인덱스 생성
         self._name_to_ids_index = self._build_name_to_ids_index()
@@ -891,17 +888,7 @@ class StationData:
         self.logger.debug(f"역 정보 조회 완료: {normalized_station} - {len(lines)}개 노선")
         return result
 
-    # 두 역 사이의 공통 노선을 찾아 환승 없이 이동 가능한지 확인
-    def find_common_stations(self, station1: str, station2: str) -> List[str]:
-        """두 역 사이의 공통 노선을 찾습니다."""
-        info1 = self.get_station_info(station1)
-        info2 = self.get_station_info(station2)
-        
-        lines1 = [line["line_name"] for line in info1["lines"]]
-        lines2 = [line["line_name"] for line in info2["lines"]]
-        
-        common_lines = list(set(lines1) & set(lines2))
-        return common_lines
+    # 경량화: 두 역 사이의 공통 노선 찾기 기능 제거됨
 
     # 노선 코드를 사용하여 노선의 한글 이름을 반환 (내부 헬퍼 함수)
     def _get_line_name(self, line_code: str) -> str:

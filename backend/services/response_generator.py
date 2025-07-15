@@ -2,8 +2,9 @@ from openai import OpenAI
 from config import Config
 import json
 import logging
+import time
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime
 from .station_data import StationData
 
 class FastResponseGenerator:
@@ -83,10 +84,7 @@ class ResponseGenerator:
             keyword in user_query for keyword in bidirectional_keywords
         )
 
-        # 추가 지침 생성
-        enhanced_info = ""
-        if parsed_data and "enhanced_stations" in parsed_data:
-            enhanced_info = self._generate_enhanced_instructions(parsed_data)
+        # 경량화: 추가 지침 생성 로직 제거됨
 
         # 방향 지침
         direction_instruction = (
@@ -104,13 +102,11 @@ class ResponseGenerator:
 ## 추가 컨텍스트
 - 현재 시간: {current_time}
 - 방향 지침: {direction_instruction}
-
-{enhanced_info}
         """.strip()
 
     def _prepare_data_message(self, subway_data: Dict[str, Any]) -> str:
         """지하철 데이터를 JSON 형태로 정리"""
-        print("subway_data: ", subway_data)
+        # print("subway_data: ", subway_data)
         return f"""
             실시간 지하철 도착정보 데이터:
             {json.dumps(subway_data, ensure_ascii=False, indent=2)}
@@ -182,20 +178,29 @@ class ResponseGenerator:
                 🚇 당산역 실시간 도착정보
                 ---------------------------------------------
                 📍 9호선 당산
-                김포공항행 급행 (하행)
-                - 이 역의 다음역은 '선유도' 입니다.
+                    중앙보훈병원 급행 (상행)
+                - 이 역의 다음역은 '샛강' 입니다.
                 - 🕐 도착예정: 오후 10:06 (1분 25초 후)
+                
+                    중앙보훈병원 급행 (상행)
+                - 이 역의 다음역은 '노량진' 입니다.
+                - 🕐 도착예정: 오후 10:09 (3분 25초 후)
+                ---------------------------------------------
+                📍 9호선 당산
+                🚨 개화행 막차 (하행)
+                - 이 역의 다음역은 '선유도' 입니다.
+                - 🕐 도착예정: 오후 8:12 (6분 15초 후)
 
-                🚨 개화행 (하행)
+                🚨 개화행 막차 (하행)
                 - 이 역의 다음역은 '선유도' 입니다.
                 - 🕐 도착예정: 오후 10:12 (8분 15초 후)
                 ---------------------------------------------
                 📍 2호선 당산
-                🚨 성수행 (외선)
+                🚨 성수행 막차 (외선)
                 - 이 역의 다음역은 '영등포구청' 입니다.
                 - 🕐 도착예정: 오후 10:08 (4분 후)
 
-                성수행 (외선)
+                    성수행 (외선)
                 - 이 역의 다음역은 '영등포구청' 입니다.
                 - 🕐 도착예정: 오후 10:12 (7분 50초 후)
                 ---------------------------------------------
@@ -203,7 +208,7 @@ class ResponseGenerator:
 
             # 예시 2 : 당산 2
             🚇 당산역 실시간 도착정보
-            ---------------------------------------------
+                ---------------------------------------------
                📍 2호선 당산
                 성수행 (외선)
                 - 이 역의 다음역은 '영등포구청' 입니다.
@@ -223,28 +228,22 @@ class ResponseGenerator:
                 ---------------------------------------------
                 2025/7/12 오후 10:02 기준 서울교통공사 제공
         
-        2. 사용자 질문에 역 이름이 2개일 경우:
-        - "(출발역 → 도착역) 경로를 탐색합니다." 라는 제목 추가
-        - 각 역의 도착 정보를 방면당 최대 2개까지 출력
-        - 출발역 기준으로 도착역을 향하는 방향의 열차만 안내
-        - 같은 호선은 한 블럭으로 처리하되, 노선 정보로 분리하여 출력
-
-        3. 사용자가 역과 노선을 지정했을 경우:
+        2. 사용자가 역과 노선을 지정했을 경우:
         - 해당하는 역의 해당 노선의 정보만을 방면당 최대 4개까지 출력
  
 
-        4. 출력 형식
+        3. 출력 형식
         🚇 {station}역 실시간 도착정보
         ---------------------------------------------
         📍 {line_name} {station}
-        {막차표시}{direction_destination}행 {열차유형} ({updn_line})
+        {막차표시}{direction_destination}행 {train_type} ({updn_line})
         - 이 역의 다음역은 '{next_station}' 입니다.
         - 🕐 도착예정: {arrival_time_formatted}  ({arrival_time_text}) 
         ---------------------------------------------
         실시간 정보 - 서울교통공사 제공
         
         ## 열차 유형 표시 규칙:
-        - train_type이 "막차"인 경우: 🚨 표시만 하고 "막차" 텍스트는 생략 (예: "🚨홍대입구행 (상행)")
+        - train_type이 "막차"인 경우: 🚨 표시 (예: "🚨홍대입구행 막차 (상행)")
         - train_type이 "급행"인 경우: "급행" 텍스트 표시 (예: "홍대입구행 급행 (상행)")
         - train_type이 "ITX"인 경우: "ITX" 텍스트 표시 (예: "홍대입구행 ITX (상행)")
         - train_type이 "일반"인 경우: 아무것도 표시하지 않음 (예: "홍대입구행 (상행)")
@@ -286,47 +285,12 @@ class ResponseGenerator:
 
 
 
-    def _generate_enhanced_instructions(self, parsed_data: Dict[str, Any]) -> str:
-        """파싱된 데이터를 기반으로 추가 지침 생성"""
-        enhanced_stations = parsed_data.get("enhanced_stations", [])
-        analysis = parsed_data.get("analysis", {})
-
-        instructions = []
-
-        # 환승역 정보 추가
-        transfer_stations = [
-            s for s in enhanced_stations if s.get("is_transfer", False)
-        ]
-        if transfer_stations:
-            transfer_names = [s["name"] for s in transfer_stations]
-            instructions.append(
-                f"🔄 환승역 정보: {', '.join(transfer_names)}역은 환승역입니다."
-            )
-
-        # 공통 노선 정보 추가
-        common_lines = analysis.get("common_lines", [])
-        if len(enhanced_stations) == 2 and common_lines:
-            instructions.append(
-                f"🚇 직통 노선: {', '.join(common_lines)}로 환승 없이 이동 가능합니다."
-            )
-        elif len(enhanced_stations) == 2 and not common_lines:
-            instructions.append("🔄 환승 필요: 두 역 사이에는 환승이 필요합니다.")
-
-        # 노선 정보 상세 추가
-        for station in enhanced_stations:
-            if station.get("lines"):
-                line_info = [line["line_name"] for line in station["lines"]]
-                instructions.append(
-                    f"📍 {station['name']}역 운행 노선: {', '.join(line_info)}"
-                )
-
-        if instructions:
-            return "## 추가 정보\n" + "\n".join(instructions)
-
-        return ""
+    # 경량화: 복잡한 추가 지침 생성 로직 제거됨
 
     def _call_openai_api(self, system_prompt: str, data_message: str) -> str:
         """OpenAI API를 호출하여 응답을 생성합니다."""
+        # OpenAI API 호출 시간 측정
+        openai_start = time.time()
         response = self.client.chat.completions.create(
             model=Config.OPENAI_MODEL,  # Config에서 모델 설정 가져오기
             messages=[
@@ -335,10 +299,12 @@ class ResponseGenerator:
             ],
             temperature=0,
             max_tokens=1000,
-            presence_penalty=-2,
+            presence_penalty=0,
             frequency_penalty=0,
-            top_p=0.9,
+            top_p=1.0,
         )
+        openai_time = time.time() - openai_start
+        self.logger.info(f"🤖 OpenAI API 호출 (응답생성): {openai_time:.3f}초")
         
         content = response.choices[0].message.content
         return content if content else ""

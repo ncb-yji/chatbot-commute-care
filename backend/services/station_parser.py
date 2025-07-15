@@ -3,6 +3,7 @@ from config import Config
 import json
 import re
 import logging
+import time
 from .station_data import StationData
 
 class StationParser:
@@ -43,7 +44,7 @@ class StationParser:
         - 역 이름에서 "역"이 있다면 제거하고 응답하세요 (예: "강남역" → "강남")
         - 역 이름에서 "역"이 없으면 그대로 응답하세요 (예: "신목동" → "신목동")
         - 노선 정보가 있으면 추출하세요 (예: "9호선" → "9", "2호선" → "2", "경의선" → "경의선")
-        - 여러 역이 언급된 경우 모두 추출하세요
+        - 첫 번째 역만 추출하세요 (여러 역이 언급되어도 첫 번째만)
         - 역 이름이 없으면 빈 배열을 반환하세요
         - 노선 정보가 없으면 빈 배열을 반환하세요
 
@@ -69,14 +70,6 @@ class StationParser:
         {
             "stations": ["모란"],
             "lines": ["8"],
-            "query_type": "arrival_info"
-        }
-
-        사용자: 강남역이랑 잠실역 도착 정보 알려줘
-        응답:
-        {
-            "stations": ["강남", "잠실"],
-            "lines": [],
             "query_type": "arrival_info"
         }
 
@@ -115,14 +108,18 @@ class StationParser:
 
         response = None
         try:
+            # OpenAI API 호출 시간 측정
+            openai_start = time.time()
             response = self.client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=Config.OPENAI_MODEL,  # Config에서 모델 설정 가져오기
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                temperature=0.1
+                temperature=0
             )
+            openai_time = time.time() - openai_start
+            self.logger.info(f"🤖 OpenAI API 호출 (파싱): {openai_time:.3f}초")
             content = response.choices[0].message.content
             # 프리프로세싱 - JSON 코드블록 제거
             if content:
@@ -130,8 +127,12 @@ class StationParser:
                 cleaned_content = cleaned_content.replace("```json", "").replace("```", "")
                 result = json.loads(cleaned_content)
                 
+                # OpenAI 파싱 결과 로그
+                self.logger.info(f"🔍 OpenAI 파싱 결과: stations={result.get('stations', [])}, lines={result.get('lines', [])}")
+                
                 # 파싱된 역 이름들을 검증하고 보강
                 validated_result = self._validate_and_enhance_stations(result)
+                self.logger.info(f"✅ 검증 후 최종 결과: stations={validated_result.get('stations', [])}, lines={validated_result.get('lines', [])}")
                 return validated_result 
             else:
                 raise ValueError("응답이 비어 있음")
@@ -139,6 +140,7 @@ class StationParser:
         except (json.JSONDecodeError, ValueError) as e:
             self.logger.warning(f"JSON 파싱 실패: {e}")
             regex_result = self.extract_stations_regex(user_message)
+            self.logger.info(f"🔄 정규식 백업 파싱 결과: stations={regex_result.get('stations', [])}, lines={regex_result.get('lines', [])}")
             return {
                 "stations": regex_result.get("stations", []),
                 "lines": regex_result.get("lines", []),
@@ -147,6 +149,7 @@ class StationParser:
         except Exception as e:
             self.logger.error(f"OpenAI API 오류: {e}")
             regex_result = self.extract_stations_regex(user_message)
+            self.logger.info(f"🔄 정규식 백업 파싱 결과: stations={regex_result.get('stations', [])}, lines={regex_result.get('lines', [])}")
             return {
                 "stations": regex_result.get("stations", []),
                 "lines": regex_result.get("lines", []),
@@ -209,27 +212,27 @@ class StationParser:
         }
 
     def _validate_and_enhance_stations(self, parsed_result: dict) -> dict:
-        """파싱된 역 이름들을 검증하고 추가 정보를 보강합니다."""
+        """파싱된 역 이름들을 검증하고 정규화합니다. (경량화)"""
         stations = parsed_result.get("stations", [])
-        target_lines = parsed_result.get("lines", [])  # 사용자 입력에서 추출한 노선
+        target_lines = parsed_result.get("lines", [])
         
-        # 노선명 정규화: StationData의 line_mapping을 참고하여 정확한 노선명 사용
+        # 노선명 정규화
         normalized_target_lines = []
         for line in target_lines:
             normalized_line = self._normalize_line_name(line)
             if normalized_line:
                 normalized_target_lines.append(normalized_line)
         
-        parsed_result["lines"] = normalized_target_lines
-        enhanced_stations = []
-
-        for station in stations:
+        # 역 이름 정규화 (첫 번째 역만 처리)
+        validated_stations = []
+        
+        if stations:
+            station = stations[0]  # 첫 번째 역만 처리 (경량화)
             normalized_station = station.strip()
 
-            # 역 정보 가져오기
+            # 역 정보 가져오기 및 이름 보정
             station_info = self.station_data.get_station_info(normalized_station)
 
-            # 이름 보정 로직
             if station_info["line_count"] == 0 and not normalized_station.endswith("역"):
                 station_with_station = normalized_station + "역"
                 station_info = self.station_data.get_station_info(station_with_station)
@@ -242,61 +245,16 @@ class StationParser:
                 if station_info["line_count"] > 0:
                     normalized_station = station_without_station
 
-            if station_info["line_count"] > 0:
-                # 사용자가 노선을 지정한 경우 → 해당 노선만 필터링
-                filtered_lines = [
-                    line for line in station_info["lines"]
-                    if not normalized_target_lines or line["line_name"] in normalized_target_lines
-                ]
-
-                enhanced_stations.append({
-                    "name": normalized_station,
-                    "is_transfer": station_info["is_transfer"],
-                    "lines": filtered_lines,
-                    "line_count": len(filtered_lines)
-                })
-            else:
-                # 역 정보를 찾을 수 없는 경우
-                enhanced_stations.append({
-                    "name": normalized_station,
-                    "is_transfer": False,
-                    "lines": [],
-                    "line_count": 0
-                })
-
-        analysis = self._analyze_station_query(enhanced_stations)
+            validated_stations.append(normalized_station)
 
         return {
-            "stations": [s["name"] for s in enhanced_stations],
-            "lines": parsed_result["lines"],  # ✅ 정규화된 line_name 포함
-            "enhanced_stations": enhanced_stations,
-            "query_type": parsed_result.get("query_type", "arrival_info"),
-            "analysis": analysis
+            "stations": validated_stations,
+            "lines": normalized_target_lines,
+            "query_type": parsed_result.get("query_type", "arrival_info")
         }
 
 
-    # 역 쿼리를 분석하여 환승역 여부, 공통 노선 등 추가 인사이트를 제공
-    def _analyze_station_query(self, enhanced_stations: list) -> dict:
-        """역 쿼리를 분석하여 추가 인사이트 제공"""
-        analysis = {
-            "station_count": len(enhanced_stations),
-            "has_transfer_stations": any(s["is_transfer"] for s in enhanced_stations),
-            "common_lines": [],
-            "query_type_suggestion": "arrival_info"
-        }
-        
-        if len(enhanced_stations) == 2:
-            # 두 역이 입력된 경우 공통 노선 찾기
-            station1, station2 = enhanced_stations[0]["name"], enhanced_stations[1]["name"]
-            common_lines = self.station_data.find_common_stations(station1, station2)
-            analysis["common_lines"] = common_lines
-            
-            if common_lines:
-                analysis["query_type_suggestion"] = "route_info"  # 경로 안내 가능
-            else:
-                analysis["query_type_suggestion"] = "transfer_route"  # 환승 경로 필요
-        
-        return analysis
+    # 경량화: 복잡한 역 분석 로직 제거됨
 
     def _normalize_line_name(self, input_line: str) -> str:
         """사용자 입력 노선명을 실제 노선명으로 정규화합니다."""

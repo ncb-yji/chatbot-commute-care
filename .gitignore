@@ -1,2 +1,18 @@
-# 환경 변수 파일
-.env
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual Environments
+backend/venv/
+
+# Node.js (React)
+frontend/node_modules/
+
+# 환경변수/비밀키 파일
+*.env
+
+# macOS, VSCode 등 에디터 관련
+.DS_Store
+.vscode/

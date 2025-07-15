@@ -1,5 +1,6 @@
 from typing import Optional
 import logging
+import time
 from .station_parser import StationParser
 from .response_generator import ResponseGenerator, FastResponseGenerator
 
@@ -11,11 +12,10 @@ class OpenAIService:
     
     의존성 주입을 통해 테스트 용이성과 유연성을 향상시켰습니다.
     
-    향상된 기능:
+    주요 기능:
     - STATN_ID 기반 역 정보 관리
     - 환승역 인식 및 처리
-    - 공통 노선 분석
-    - 경로 타입별 맞춤 응답
+    - 단일 역 실시간 도착정보 제공 (경량화)
     - 🚀 성능 최적화 (39% 속도 향상)
     - 🔧 의존성 주입 지원
     - 📝 요청 로깅 및 검증 로직 추가
@@ -57,9 +57,14 @@ class OpenAIService:
         Returns:
             dict: 파싱된 역 정보 (기존 호환성 + 추가 분석 정보)
         """
+        start_time = time.time()
         self.logger.debug(f"역 이름 파싱 시작 - 입력: {user_message}")
+        
         result = self.station_parser.parse_station_query(user_message)
-        print(result)
+        
+        elapsed = time.time() - start_time
+        self.logger.info(f"🔍 StationParser 처리 완료: {elapsed:.3f}초")
+        # print(result)
         self.logger.debug(f"역 이름 파싱 완료 - 결과: {result}")
         return result
     
@@ -71,8 +76,13 @@ class OpenAIService:
             subway_data: 지하철 실시간 데이터  
             parsed_data: 파싱된 역 정보 (선택사항)
         """
+        start_time = time.time()
         self.logger.debug(f"응답 생성 시작 - 질문: {user_query}")
+        
         response = self.response_generator.generate_response(user_query, subway_data, parsed_data)
+        
+        elapsed = time.time() - start_time
+        self.logger.info(f"📝 ResponseGenerator 처리 완료: {elapsed:.3f}초")
         self.logger.debug(f"응답 생성 완료 - 길이: {len(response)}자")
         return response
     
