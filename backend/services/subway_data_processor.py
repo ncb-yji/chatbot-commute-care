@@ -81,17 +81,21 @@ class SubwayDataProcessor:
         
         ✨ 개선사항: datetime.strptime 실패 시 fallback 처리 추가
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if recptn_dt:
             try:
-                # recptnDt 형식: "20250109105500" (YYYYMMDDHHMMSS)
-                return datetime.strptime(recptn_dt, "%Y-%m-%d %H:%M:%S")
+                # recptnDt 형식: "2025-07-16 16:54:29" (YYYY-MM-DD HH:MM:SS)
+                parsed_time = datetime.strptime(recptn_dt, "%Y-%m-%d %H:%M:%S")
+                logger.info(f"🔧 recptnDt 파싱 성공: {recptn_dt} -> {parsed_time}")
+                return parsed_time
             except (ValueError, TypeError) as e:
                 # recptnDt 파싱 실패시 현재 시간 사용
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"recptnDt 파싱 실패 ({recptn_dt}): {e} - 현재 시간 사용")
+                logger.warning(f"🔧 recptnDt 파싱 실패 ({recptn_dt}): {e} - 현재 시간 사용")
                 return datetime.now()
         else:
+            logger.info(f"🔧 recptnDt 없음 - 현재 시간 사용")
             return datetime.now()
 
     def format_time_reference(self, base_time: datetime) -> tuple[str, str]:
@@ -160,11 +164,16 @@ class SubwayDataProcessor:
         return remaining_time_formatted, arrival_time_text
 
     def calculate_time_info(self, arrival_time_seconds: int, arrival_msg: str, recptn_dt: Optional[str] = None) -> Dict:
-        """도착 시간 정보를 계산합니다."""
-        base_time = self.get_base_time(recptn_dt)
-        current_time = datetime.now()  # 현재 시간
+        """도착 시간 정보를 계산합니다.
         
-        # time_reference_formatted는 현재 시간 기준으로 생성
+        ✨ 개선사항: 현재 시간 기준으로 단순화하여 시간 오류 방지
+        """
+        current_time = datetime.now()
+        
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # time_reference_formatted는 항상 현재 시간 기준
         time_reference, time_reference_formatted = self.format_time_reference(current_time)
 
         # 🔧 0초 특별 처리 (이미 도착/진입/출발한 열차)
@@ -173,26 +182,27 @@ class SubwayDataProcessor:
         
         # 도착 시간이 유효한 경우 (1초 이상)
         if arrival_time_seconds > 0:
-            # 실제 도착 시각 계산 (API 응답 시간 기준)
-            arrival_datetime = base_time + timedelta(seconds=arrival_time_seconds)
+            # 🔧 간단한 계산: 현재 시간에서 arrival_time_seconds만큼 더한 시간이 도착 시간
+            arrival_datetime = current_time + timedelta(seconds=arrival_time_seconds)
             arrival_time_formatted = self.format_korean_time(arrival_datetime)
             
-            # 현재 시간 기준으로 실제 남은 시간 계산
-            time_diff = arrival_datetime - current_time
-            actual_remaining_seconds = int(time_diff.total_seconds())
-            
-            # 남은 시간이 음수인 경우 (이미 지난 시간) 처리
-            if actual_remaining_seconds <= 0:
-                remaining_time_formatted = "곧 도착"
-                arrival_time_text = "곧 도착"
+            # 🔧 비정상적으로 긴 시간 체크 (1시간 이상)
+            if arrival_time_seconds > 3600:
+                logger.warning(f"🔧 비정상적으로 긴 대기 시간 ({arrival_time_seconds}초) - 원본 메시지 사용")
+                remaining_time_formatted = arrival_msg or "정보 없음"
+                arrival_time_text = arrival_msg or "정보 없음"
+                arrival_time_formatted = "정보 없음"
             else:
-                # 실제 남은 시간으로 포맷팅
-                remaining_time_formatted, arrival_time_text = self.format_remaining_time(actual_remaining_seconds)
+                # 정상적인 시간 포맷팅
+                remaining_time_formatted, arrival_time_text = self.format_remaining_time(arrival_time_seconds)
+            
+            logger.info(f"🔧 시간 계산 완료 - 현재: {current_time}, 도착: {arrival_datetime}, 남은시간: {arrival_time_seconds}초")
+            
         else:
             # 도착 시간을 파싱할 수 없는 경우 원본 메시지 사용
             arrival_time_formatted = "정보 없음"
-            remaining_time_formatted = "정보 없음"
-            arrival_time_text = arrival_msg if arrival_msg else "정보 없음"
+            remaining_time_formatted = arrival_msg or "정보 없음"
+            arrival_time_text = arrival_msg or "정보 없음"
         
         return self.create_time_info_dict(arrival_time_formatted, remaining_time_formatted, 
                                          arrival_time_text, time_reference, time_reference_formatted)

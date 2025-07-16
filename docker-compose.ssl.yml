@@ -1,0 +1,68 @@
+version: '3.8'
+
+services:
+  # 백엔드 서비스 (FastAPI) - SSL 지원
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: commute-care-backend-ssl
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - SEOUL_API_KEY=${SEOUL_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LOG_LEVEL=INFO
+      - DOMAIN_NAME=${DOMAIN_NAME}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 프론트엔드 서비스 (React + Nginx) - SSL 지원
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: commute-care-frontend-ssl
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - backend
+    volumes:
+      - ./ssl/certs:/etc/nginx/ssl:ro
+      - ./nginx-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Let's Encrypt SSL 인증서 자동 갱신
+  certbot:
+    image: certbot/certbot:latest
+    container_name: commute-care-certbot
+    volumes:
+      - ./ssl/certs:/etc/letsencrypt
+      - ./ssl/www:/var/www/certbot
+    command: >
+      sh -c "
+        certbot renew --webroot --webroot-path=/var/www/certbot --email admin@${DOMAIN_NAME} --agree-tos --non-interactive &&
+        nginx -s reload
+      "
+    depends_on:
+      - frontend
+    restart: unless-stopped
+
+networks:
+  default:
+    name: commute-care-ssl-network 
