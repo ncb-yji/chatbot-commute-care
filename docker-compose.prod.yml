@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  # 백엔드 서비스 (FastAPI) - 프로덕션
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: commute-care-backend-prod
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - SEOUL_API_KEY=${SEOUL_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # 프론트엔드 서비스 (React + Nginx) - 프로덕션
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: commute-care-frontend-prod
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  default:
+    name: commute-care-prod-network 

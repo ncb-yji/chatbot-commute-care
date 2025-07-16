@@ -3,13 +3,13 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 
-# 의존성 파일 복사
+# package.json과 package-lock.json 먼저 복사 (캐시 최적화)
 COPY package*.json ./
 
-# 의존성 설치
-RUN npm install
+# 의존성 설치 (package.json 변경 시만 재실행)
+RUN npm ci --only=production
 
-# 소스 코드 복사
+# 소스 코드 복사 (마지막에 복사하여 캐시 활용)
 COPY . .
 
 # React 앱 빌드
